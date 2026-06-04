@@ -126,7 +126,7 @@ class ScrapeFromPlayerGlossary:
                 if 'Position' in tag.get_text(strip=True)]
             datum["Position(s)"] = position_maybe[0].split(":")[1]
 
-            print(datum)
+            # print(datum)
             # Players must have at least 900 plate apperances
             if int(datum['PA']) < 900:
                 print("Not Eligible: Insufficient batting data") 
@@ -150,7 +150,7 @@ def main():
         time.sleep(30)
         data = scraper.scrape_player(player)
         if data is not None:
-            player_data += data
+            player_data.append(data)
         # print(scraper.scrape_player(player))
     print(len(player_data)) 
     print(player_data[:5])
