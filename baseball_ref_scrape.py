@@ -5,7 +5,16 @@ import pandas as pd
 from bs4 import BeautifulSoup
 import logging
 
+logger = logging.getLogger(__name__)
+logfile = logging.FileHandler('base_scrape.log')
+logfile.setLevel(logging.DEBUG)
+logstream = logging.StreamHandler()
+logstream.setLevel(logging.INFO)
+logger.addHandler(logfile)
+logger.addHandler(logstream)
+
 DATA_COLS = ["b_pa", "b_batting_avg", "b_onbase_perc", "b_slugging_perc"]
+SORTED_COLUMNS = ["Name", "Position(s)", "PA", "AVG", "OBP", "SLG"]
 
 def _column_we_care_about(column_data_stat_val):
     return column_data_stat_val in DATA_COLS
@@ -103,9 +112,11 @@ class ScrapeFromPlayerGlossary:
         else:
             soup = BeautifulSoup(resp.text, 'lxml')
 
+        name = soup.find('div', id='info')('h1')[0].get_text(strip=True)
+        logger.info(name)
         table = soup.find("table", id=self.table_id)
         if table is None:
-            print("Not Eligible: No batting data")
+            logger.warning("Not Eligible: No batting data")
             return None
         
         lifetime_batting_data = table.find('tr', id=f"{self.table_id}.Yrs")
@@ -113,23 +124,25 @@ class ScrapeFromPlayerGlossary:
             headers = [th.get_text(strip=True) for th in table.find("thead").find_all("th") if _column_we_care_about(th.get('data-stat'))]
             # print(headers)
             row_data = [td.get_text(strip=True) for td in lifetime_batting_data('td') if _column_we_care_about(td.get('data-stat'))]
-            # print(row_data)
+            logger.debug(row_data)
             datum = dict(zip(headers, row_data))
             
-            datum["Player Name"] = soup.find('div', id='info')('h1')[0].get_text(strip=True)
+            datum["Player Name"] = name
 
-            #Position is in the very first paragraph in div is position, MOST TIMES
+            #Position is in the very first paragraph in div, MOST TIMES
+            logger.debug(soup.find('div', id='info')('p'))
             position_maybe = [
                 tag.get_text(strip=True)
                 for tag
-                in soup.find('div', id='info')('p')[:4]
+                in soup.find('div', id='info')('p')[:]
                 if 'Position' in tag.get_text(strip=True)]
+            logger.info(position_maybe)
             datum["Position(s)"] = position_maybe[0].split(":")[1]
 
             # print(datum)
             # Players must have at least 900 plate apperances
             if int(datum['PA']) < 900:
-                print("Not Eligible: Insufficient batting data") 
+                logger.warning("Not Eligible: Insufficient batting data") 
                 return None
             else:
                 return datum
@@ -146,14 +159,14 @@ def main():
     print(players[::420])
     print(len(players))
     player_data = []
-    for player in players[:25]:
+    for player in players[:]:
         time.sleep(30)
         data = scraper.scrape_player(player)
         if data is not None:
             player_data.append(data)
         # print(scraper.scrape_player(player))
     print(len(player_data)) 
-    print(player_data[:5])
+    print(player_data[-5:])
 
 
 
