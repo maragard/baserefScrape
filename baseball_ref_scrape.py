@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 logfile = logging.FileHandler('base_scrape.log')
 logfile.setLevel(logging.DEBUG)
 logstream = logging.StreamHandler()
-logstream.setLevel(logging.INFO)
+logstream.setLevel(logging.DEBUG)
 logger.addHandler(logfile)
 logger.addHandler(logstream)
 
@@ -128,23 +128,24 @@ class ScrapeFromPlayerGlossary:
             datum = dict(zip(headers, row_data))
             
             datum["Player Name"] = name
-
-            #Position is in the very first paragraph in div, MOST TIMES
-            logger.debug(soup.find('div', id='info')('p'))
-            position_maybe = [
-                tag.get_text(strip=True)
-                for tag
-                in soup.find('div', id='info')('p')[:]
-                if 'Position' in tag.get_text(strip=True)]
-            logger.info(position_maybe)
-            datum["Position(s)"] = position_maybe[0].split(":")[1]
-
-            # print(datum)
-            # Players must have at least 900 plate apperances
             if int(datum['PA']) < 900:
                 logger.warning("Not Eligible: Insufficient batting data") 
                 return None
             else:
+                #Position is in the very first paragraph in div, MOST TIMES
+                position_maybe = [
+                    tag.get_text(strip=True)
+                    for tag
+                    in soup.find('div', id='info')('p')[:]
+                    if 'Position' in tag.get_text(strip=True)]
+                logger.info(position_maybe)
+                try:
+                    datum["Position(s)"] = position_maybe[0].split(":")[1]
+                except IndexError:
+                    datum['Position(s)'] = "Not Found"
+
+                # print(datum)
+                # Players must have at least 900 plate apperances
                 return datum
 
 def main():
