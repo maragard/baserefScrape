@@ -6,12 +6,13 @@ from bs4 import BeautifulSoup
 import logging
 
 logger = logging.getLogger(__name__)
-logfile = logging.FileHandler('base_scrape.log')
+logfile = logging.FileHandler('base_scrape.log', mode='w')
 logfile.setLevel(logging.DEBUG)
 logstream = logging.StreamHandler()
 logstream.setLevel(logging.DEBUG)
-logger.addHandler(logfile)
 logger.addHandler(logstream)
+logger.addHandler(logfile)
+logger.setLevel(logging.INFO)
 
 DATA_COLS = ["b_pa", "b_batting_avg", "b_onbase_perc", "b_slugging_perc"]
 SORTED_COLUMNS = ["Name", "Position(s)", "PA", "AVG", "OBP", "SLG"]
@@ -128,6 +129,7 @@ class ScrapeFromPlayerGlossary:
             datum = dict(zip(headers, row_data))
             
             datum["Player Name"] = name
+            # Players must have at least 900 plate apperances
             if int(datum['PA']) < 900:
                 logger.warning("Not Eligible: Insufficient batting data") 
                 return None
@@ -145,7 +147,6 @@ class ScrapeFromPlayerGlossary:
                     datum['Position(s)'] = "Not Found"
 
                 # print(datum)
-                # Players must have at least 900 plate apperances
                 return datum
 
 def main():
