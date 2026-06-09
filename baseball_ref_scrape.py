@@ -9,13 +9,13 @@ logger = logging.getLogger(__name__)
 logfile = logging.FileHandler('base_scrape.log', mode='w')
 logfile.setLevel(logging.DEBUG)
 logstream = logging.StreamHandler()
-logstream.setLevel(logging.DEBUG)
+logstream.setLevel(logging.INFO)
 logger.addHandler(logstream)
 logger.addHandler(logfile)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 
 DATA_COLS = ["b_pa", "b_batting_avg", "b_onbase_perc", "b_slugging_perc"]
-SORTED_COLUMNS = ["Name", "Position(s)", "PA", "AVG", "OBP", "SLG"]
+SORTED_COLUMNS = ["Player Name", "Position(s)", "PA", "AVG", "OBP", "SLG"]
 
 def _column_we_care_about(column_data_stat_val):
     return column_data_stat_val in DATA_COLS
@@ -42,7 +42,6 @@ class ScrapeFromSeasonBatting:
             rows.append(row_data)
 
         return rows
-
 
     def get_batting_stats(self):
         try:
@@ -80,7 +79,14 @@ class ScrapeFromPlayerGlossary:
 
     #     return rows
 
-    def scrape_by_letter(self, letter):
+    def serialize_data(self, data: list[dict], filename: str):
+        df = pd.DataFrame(data)
+        df.rename(columns={"BA": "AVG"}, inplace=True)
+        df = df.loc[:, SORTED_COLUMNS]
+        df.to_csv(f"{filename}.csv", index=False)
+        return
+
+    def scrape_by_letter(self, letter: str):
         scrape_url = f"{self.url}players/{letter}/"
         try:
             resp = requests.get(scrape_url)
@@ -103,7 +109,7 @@ class ScrapeFromPlayerGlossary:
             time.sleep(30)
         return full_player_list
     
-    def scrape_player(self, player_slug):
+    def scrape_player(self, player_slug: str):
         scrape_url = f"{self.url}{player_slug}"
         try:
             resp = requests.get(scrape_url)
@@ -169,6 +175,7 @@ def main():
         # print(scraper.scrape_player(player))
     print(len(player_data)) 
     print(player_data[-5:])
+    scraper.serialize_data(data=player_data, filename="players")
 
 
 
