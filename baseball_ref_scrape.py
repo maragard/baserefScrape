@@ -4,6 +4,8 @@ import string
 import pandas as pd
 from bs4 import BeautifulSoup
 import logging
+from concurrent.futures import ThreadPoolExecutor
+import random
 
 logger = logging.getLogger(__name__)
 logfile = logging.FileHandler('base_scrape.log', mode='w')
@@ -63,6 +65,7 @@ class ScrapeFromPlayerGlossary:
     table_id = "players_standard_batting"
 
     def __init__(self):
+        self.data = []
         return
 
     # def parse_table(self, table):
@@ -92,6 +95,7 @@ class ScrapeFromPlayerGlossary:
             resp = requests.get(scrape_url)
             resp.raise_for_status()
         except requests.RequestException as e:
+            logger.error(f"Encountered {e} while attempting to access {scrape_url}")
             return None
         else:
             soup = BeautifulSoup(resp.text, "lxml")
@@ -110,12 +114,14 @@ class ScrapeFromPlayerGlossary:
         return full_player_list
     
     def scrape_player(self, player_slug: str):
+        time.sleep(random.randint(10, 30))
         scrape_url = f"{self.url}{player_slug}"
         try:
             resp = requests.get(scrape_url)
             resp.raise_for_status()
         except requests.RequestException as e:
-            return None
+            logger.error(f"Encountered {e} while attempting to access {scrape_url}")
+            self.data.append(None)
         else:
             soup = BeautifulSoup(resp.text, 'lxml')
 
@@ -124,7 +130,7 @@ class ScrapeFromPlayerGlossary:
         table = soup.find("table", id=self.table_id)
         if table is None:
             logger.warning("Not Eligible: No batting data")
-            return None
+            self.data.append(None)
         
         lifetime_batting_data = table.find('tr', id=f"{self.table_id}.Yrs")
         if lifetime_batting_data:
@@ -138,7 +144,7 @@ class ScrapeFromPlayerGlossary:
             # Players must have at least 900 plate apperances
             if int(datum['PA']) < 900:
                 logger.warning("Not Eligible: Insufficient batting data") 
-                return None
+                self.data.append(None)
             else:
                 #Position is in the very first paragraph in div, MOST TIMES
                 position_maybe = [
@@ -153,7 +159,7 @@ class ScrapeFromPlayerGlossary:
                     datum['Position(s)'] = "Not Found"
 
                 # print(datum)
-                return datum
+                self.data.append(datum)
 
 def main():
     # stats = ScrapeFromSeasonBatting().get_batting_stats()
@@ -166,16 +172,17 @@ def main():
     players = scraper.build_player_list()
     print(players[::420])
     print(len(players))
-    player_data = []
-    for player in players[:]:
-        time.sleep(30)
-        data = scraper.scrape_player(player)
-        if data is not None:
-            player_data.append(data)
+    with ThreadPoolExecutor(max_workers=8) as exec:
+        exec.map(scraper.scrape_player, players)
+    # for player in players[:]:
+    #     time.sleep(30)
+    #     data = scraper.scrape_player(player)
+    #     if data is not None:
+    #         player_data.append(data)
         # print(scraper.scrape_player(player))
-    print(len(player_data)) 
-    print(player_data[-5:])
-    scraper.serialize_data(data=player_data, filename="players")
+    print(len(scraper.data)) 
+    print(scraper.data[-5:])
+    scraper.serialize_data(data=scraper.data, filename="players")
 
 
 
