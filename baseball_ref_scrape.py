@@ -8,13 +8,17 @@ from concurrent.futures import ThreadPoolExecutor
 import random
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+file_format = logging.Formatter('%(asctime)s %(threadName)s %(levelname)s %(message)s')
 logfile = logging.FileHandler('base_scrape.log', mode='w')
 logfile.setLevel(logging.DEBUG)
+logfile.setFormatter(file_format)
+stream_format = logging.Formatter('%(threadName)s %(levelname)s %(message)s')
 logstream = logging.StreamHandler()
 logstream.setLevel(logging.INFO)
+logstream.setFormatter(stream_format)
 logger.addHandler(logstream)
 logger.addHandler(logfile)
-logger.setLevel(logging.DEBUG)
 
 DATA_COLS = ["b_pa", "b_batting_avg", "b_onbase_perc", "b_slugging_perc"]
 SORTED_COLUMNS = ["Player Name", "Position(s)", "PA", "AVG", "OBP", "SLG"]
@@ -98,22 +102,22 @@ class ScrapeFromPlayerGlossary:
             logger.error(f"Encountered {e} while attempting to access {scrape_url}")
             return None
         else:
-            soup = BeautifulSoup(resp.text, "lxml")
+            soup = BeautifulSoup(resp.content, "lxml")
             players = soup.find('div', class_="section_content")('p')
             players = [tag.find('a').get('href') for tag in players]
   
         return players
 
-    def build_player_list(self):
+    def build_player_list(self, limit: int = None):
         full_player_list = []
         allchars = list(string.ascii_lowercase)
         #Limit on how much we scrape
-        for char in allchars[:1]:
+        for char in allchars[:limit]:
             full_player_list += self.scrape_by_letter(char)
-            time.sleep(30)
+            time.sleep(random.randint(10, 30))
         return full_player_list
     
-    def scrape_player(self, player_slug: str):
+    def scrape_player(self, player_slug: str) -> None:
         time.sleep(random.randint(10, 30))
         scrape_url = f"{self.url}{player_slug}"
         try:
@@ -123,7 +127,7 @@ class ScrapeFromPlayerGlossary:
             logger.error(f"Encountered {e} while attempting to access {scrape_url}")
             self.data.append(None)
         else:
-            soup = BeautifulSoup(resp.text, 'lxml')
+            soup = BeautifulSoup(resp.content, 'lxml', from_encoding="ISO-8859-1")
 
         name = soup.find('div', id='info')('h1')[0].get_text(strip=True)
         logger.info(name)
@@ -167,12 +171,15 @@ def main():
     # for index, row in enumerate(stats[:20], start=1):
     #     print(index, row)
     scraper = ScrapeFromPlayerGlossary()
+    start_time = time.time()
 
     #Logic below can be condensed
-    players = scraper.build_player_list()
+    players = scraper.build_player_list(limit=2)
+    list_acq_time = time.time()
+    logger.info(f"Compiled list of {len(players)} players in {list_acq_time - start_time} seconds")
     print(players[::420])
     print(len(players))
-    with ThreadPoolExecutor(max_workers=8) as exec:
+    with ThreadPoolExecutor(max_workers=16) as exec:
         exec.map(scraper.scrape_player, players)
     # for player in players[:]:
     #     time.sleep(30)
@@ -180,9 +187,14 @@ def main():
     #     if data is not None:
     #         player_data.append(data)
         # print(scraper.scrape_player(player))
-    print(len(scraper.data)) 
-    print(scraper.data[-5:])
+    scraper.data = [i for i in scraper.data if i is not None]
+    scrape_complete = time.time()
+    logger.info(f"Acquired {len(scraper.data)} in {scrape_complete - start_time} seconds")
+    # print(len(scraper.data)) 
+    # print(scraper.data[-5:])
     scraper.serialize_data(data=scraper.data, filename="players")
+    end_time = time.time()
+    logger.info(f"Total runtime: {end_time - start_time} seconds")
 
 
 
