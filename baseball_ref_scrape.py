@@ -179,7 +179,7 @@ def main():
     logger.info(f"Compiled list of {len(players)} players in {list_acq_time - start_time} seconds")
     print(players[::420])
     print(len(players))
-    with ThreadPoolExecutor(max_workers=16) as exec:
+    with ThreadPoolExecutor(max_workers=8) as exec:
         exec.map(scraper.scrape_player, players)
     # for player in players[:]:
     #     time.sleep(30)
