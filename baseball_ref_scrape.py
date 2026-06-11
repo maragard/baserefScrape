@@ -1,11 +1,13 @@
-import time
+import argparse
+import logging
+import pandas as pd
+import random
+import re
 import requests
 import string
-import pandas as pd
+import time
 from bs4 import BeautifulSoup
-import logging
 from concurrent.futures import ThreadPoolExecutor
-import random
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -23,10 +25,15 @@ logger.addHandler(logfile)
 # Add: debut year, retirement year(if eligible), team(s) played for
 
 DATA_COLS = ["b_pa", "b_batting_avg", "b_onbase_perc", "b_slugging_perc"]
-SORTED_COLUMNS = ["Player Name", "Position(s)", "PA", "AVG", "OBP", "SLG"]
+SORTED_COLUMNS = ["Player Name", "Position(s)", "Team(s)", "Debut Year", "Retirement Year", "PA", "AVG", "OBP", "SLG"]
 
 def _column_we_care_about(column_data_stat_val):
     return column_data_stat_val in DATA_COLS
+
+def _has_data(tag):
+    return tag.name == 'p' and len(tag.contents) > 1
+
+year = re.compile(r"\d{4}")
 
 class ScrapeFromSeasonBatting:
     
@@ -101,7 +108,7 @@ class ScrapeFromPlayerGlossary:
             resp = requests.get(scrape_url)
             resp.raise_for_status()
         except requests.RequestException as e:
-            logger.error(f"Encountered {e} while attempting to access {scrape_url}")
+            logger.error(f"Encountered {e}")
             return None
         else:
             soup = BeautifulSoup(resp.content, "lxml")
@@ -136,18 +143,19 @@ class ScrapeFromPlayerGlossary:
             resp = requests.get(scrape_url)
             resp.raise_for_status()
         except requests.RequestException as e:
-            logger.error(f"Encountered {e} while attempting to access {scrape_url}")
+            logger.error(f"Encountered {e}")
             self.data.append(None)
             return
         else:
-            soup = BeautifulSoup(resp.content, 'lxml', from_encoding="ISO-8859-1")
+            soup = BeautifulSoup(resp.content, 'lxml', from_encoding="latin-1")
 
         name = soup.find('div', id='info')('h1')[0].get_text(strip=True)
         logger.info(name)
         table = soup.find("table", id=self.table_id)
         if table is None:
-            logger.warning("Not Eligible: No batting data")
+            logger.warning(f"{name} -- Not Eligible: No batting data")
             self.data.append(None)
+            return
         
         lifetime_batting_data = table.find('tr', id=f"{self.table_id}.Yrs")
         if lifetime_batting_data:
@@ -156,27 +164,45 @@ class ScrapeFromPlayerGlossary:
             row_data = [td.get_text(strip=True) for td in lifetime_batting_data('td') if _column_we_care_about(td.get('data-stat'))]
             logger.debug(row_data)
             datum = dict(zip(headers, row_data))
-            
-            datum["Player Name"] = name
+
             # Players must have at least 900 plate apperances
             if int(datum['PA']) < 900:
-                logger.warning("Not Eligible: Insufficient batting data") 
+                logger.warning(f"{name} -- Not Eligible: Insufficient batting data") 
                 self.data.append(None)
             else:
-                #Position is in the very first paragraph in div, MOST TIMES
-                position_maybe = [
-                    tag.get_text(strip=True)
-                    for tag
-                    in soup.find('div', id='info')('p')[:]
-                    if 'Position' in tag.get_text(strip=True)]
-                logger.info(position_maybe)
+                # Teams mmust be harvested from the tbody
+                teams = set([
+                    row.find('td', attrs={'data-stat': 'team_name_abbr'}).get_text(strip=True)
+                    for row 
+                    in table.find('tbody').find_all('tr')
+                ])
+                #All data about player is in the div w/ id 'info'.
+                #If player is active or retires, or depending on records quality,
+                # the list of p tags varies. Reconfigure _has_data() to adjust how we find 
+                # tags with data.
+                general_data = [tag.text for tag in soup.find('div', id='info')(_has_data)]
+                position_maybe = [tag for tag in general_data if 'Position' in tag]
+                debut_maybe = [tag for tag in general_data if 'Debut' in tag]
+                retire_maybe = [tag for tag in general_data if 'Last Game' in tag]
+                logger.debug(position_maybe)
+                
                 try:
                     datum["Position(s)"] = position_maybe[0].split(":")[1]
                 except IndexError:
                     datum['Position(s)'] = "Not Found"
+                
+                try:
+                    datum["Retirement Year"] = year.search(retire_maybe[0]).group(0)
+                except IndexError:
+                    datum["Retirement Year"] = "Not Found"
+                datum['Debut Year'] = year.search(debut_maybe[0]).group(0)
+                datum["Player Name"] = name
+                datum['Team(s)'] = ','.join(teams)
 
                 # print(datum)
+                logger.info(f"{name} -- Successfully scraped")
                 self.data.append(datum)
+                return
 
 def main():
     # stats = ScrapeFromSeasonBatting().get_batting_stats()
@@ -187,7 +213,7 @@ def main():
     start_time = time.time()
 
     #Logic below can be condensed
-    players = scraper.build_player_list(limit='d')
+    players = scraper.build_player_list(limit='c')
     list_acq_time = time.time()
     logger.info(f"Compiled list of {len(players)} players in {list_acq_time - start_time} seconds")
     print(players[::420])
