@@ -20,6 +20,8 @@ logstream.setFormatter(stream_format)
 logger.addHandler(logstream)
 logger.addHandler(logfile)
 
+# Add: debut year, retirement year(if eligible), team(s) played for
+
 DATA_COLS = ["b_pa", "b_batting_avg", "b_onbase_perc", "b_slugging_perc"]
 SORTED_COLUMNS = ["Player Name", "Position(s)", "PA", "AVG", "OBP", "SLG"]
 
@@ -108,13 +110,23 @@ class ScrapeFromPlayerGlossary:
   
         return players
 
-    def build_player_list(self, limit: int = None):
+    def build_player_list(self, limit: int | str = None):
         full_player_list = []
         allchars = list(string.ascii_lowercase)
         #Limit on how much we scrape
-        for char in allchars[:limit]:
-            full_player_list += self.scrape_by_letter(char)
-            time.sleep(random.randint(10, 30))
+        if (isinstance(limit, int) and limit < len(allchars)) or limit is None:
+            for char in allchars[:limit]:
+                full_player_list += self.scrape_by_letter(char)
+                time.sleep(random.randint(10, 30))
+        elif isinstance(limit, str) and limit in allchars:
+            for char in allchars:
+                if char is not limit:
+                    full_player_list += self.scrape_by_letter(char)
+                    time.sleep(random.randint(10, 30))
+                else:
+                    break
+        else:
+            logger.critical(f"Incorrect input provided for 'limit': {limit}")
         return full_player_list
     
     def scrape_player(self, player_slug: str) -> None:
@@ -126,6 +138,7 @@ class ScrapeFromPlayerGlossary:
         except requests.RequestException as e:
             logger.error(f"Encountered {e} while attempting to access {scrape_url}")
             self.data.append(None)
+            return
         else:
             soup = BeautifulSoup(resp.content, 'lxml', from_encoding="ISO-8859-1")
 
@@ -174,7 +187,7 @@ def main():
     start_time = time.time()
 
     #Logic below can be condensed
-    players = scraper.build_player_list(limit=2)
+    players = scraper.build_player_list(limit='d')
     list_acq_time = time.time()
     logger.info(f"Compiled list of {len(players)} players in {list_acq_time - start_time} seconds")
     print(players[::420])
