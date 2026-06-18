@@ -27,9 +27,11 @@ logger.addHandler(logfile)
 DATA_COLS = ["b_pa", "b_batting_avg", "b_onbase_perc", "b_slugging_perc"]
 SORTED_COLUMNS = ["Player Name", "Position(s)", "Team(s)", "Debut Year", "Retirement Year", "PA", "AVG", "OBP", "SLG"]
 
-def _column_we_care_about(column_data_stat_val):
-    return column_data_stat_val in DATA_COLS
+#Filter func for use with BeautifulSoup's find_all() to find parts of rows we need
+def _column_we_care_about(tag):
+    return tag.name in ['th', 'td'] and'data-stat' in tag.attrs.keys() and tag.get('data-stat') in DATA_COLS
 
+#Filter func for use with BeautifulSoup's find_all() to find parts of the 'info' div that we need
 def _has_data(tag):
     return tag.name == 'p' and len(tag.contents) > 1
 
@@ -95,14 +97,14 @@ class ScrapeFromPlayerGlossary:
 
     #     return rows
 
-    def serialize_data(self, data: list[dict], filename: str):
-        df = pd.DataFrame(data)
+    def serialize_data(self, filename: str) -> None:
+        df = pd.DataFrame(self.data)
         df.rename(columns={"BA": "AVG"}, inplace=True)
         df = df.loc[:, SORTED_COLUMNS]
         df.to_csv(f"{filename}.csv", index=False)
         return
 
-    def scrape_by_letter(self, letter: str):
+    def scrape_by_letter(self, letter: str) -> list[str]:
         scrape_url = f"{self.url}players/{letter}/"
         try:
             resp = requests.get(scrape_url)
@@ -117,7 +119,7 @@ class ScrapeFromPlayerGlossary:
   
         return players
 
-    def build_player_list(self, limit: int | str = None):
+    def build_player_list(self, limit: int | str = None) -> list[str]:
         full_player_list = []
         allchars = list(string.ascii_lowercase)
         #Limit on how much we scrape
@@ -159,9 +161,9 @@ class ScrapeFromPlayerGlossary:
         
         lifetime_batting_data = table.find('tr', id=f"{self.table_id}.Yrs")
         if lifetime_batting_data:
-            headers = [th.get_text(strip=True) for th in table.find("thead").find_all("th") if _column_we_care_about(th.get('data-stat'))]
+            headers = [th.get_text(strip=True) for th in table.find("thead").find_all(_column_we_care_about)]
             # print(headers)
-            row_data = [td.get_text(strip=True) for td in lifetime_batting_data('td') if _column_we_care_about(td.get('data-stat'))]
+            row_data = [td.get_text(strip=True) for td in lifetime_batting_data(_column_we_care_about)]
             logger.debug(row_data)
             datum = dict(zip(headers, row_data))
 
@@ -180,10 +182,12 @@ class ScrapeFromPlayerGlossary:
                 #If player is active or retires, or depending on records quality,
                 # the list of p tags varies. Reconfigure _has_data() to adjust how we find 
                 # tags with data.
-                general_data = [tag.text for tag in soup.find('div', id='info')(_has_data)]
-                position_maybe = [tag for tag in general_data if 'Position' in tag]
-                debut_maybe = [tag for tag in general_data if 'Debut' in tag]
-                retire_maybe = [tag for tag in general_data if 'Last Game' in tag]
+                general_info = [tag.get_text(strip=True) for tag in soup.find('div', id='info')(_has_data)]
+                logger.debug(general_info)
+                #TODO: write func to parse down positions (e.g. "First Baseman and Left Field" ==> "1B/LF")
+                position_maybe = [tag for tag in general_info if 'Position' in tag]
+                debut_maybe = [tag for tag in general_info if 'Debut' in tag]
+                retire_maybe = [tag for tag in general_info if 'Last Game' in tag]
                 logger.debug(position_maybe)
                 
                 try:
@@ -191,13 +195,14 @@ class ScrapeFromPlayerGlossary:
                 except IndexError:
                     datum['Position(s)'] = "Not Found"
                 
+                # TODO: Compute 'era' of player based on debut & retirement year
                 try:
                     datum["Retirement Year"] = year.search(retire_maybe[0]).group(0)
                 except IndexError:
                     datum["Retirement Year"] = "Not Found"
                 datum['Debut Year'] = year.search(debut_maybe[0]).group(0)
                 datum["Player Name"] = name
-                datum['Team(s)'] = ','.join(teams)
+                datum['Team(s)'] = ','.join([team for team in teams if len(team) == 3])
 
                 # print(datum)
                 logger.info(f"{name} -- Successfully scraped")
@@ -231,7 +236,7 @@ def main():
     logger.info(f"Acquired {len(scraper.data)} in {scrape_complete - start_time} seconds")
     # print(len(scraper.data)) 
     # print(scraper.data[-5:])
-    scraper.serialize_data(data=scraper.data, filename="players")
+    scraper.serialize_data(filename="players")
     end_time = time.time()
     logger.info(f"Total runtime: {end_time - start_time} seconds")
 
