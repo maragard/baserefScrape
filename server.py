@@ -3,11 +3,15 @@ import sys
 import os
 import sqlite3
 import csv
+import pickle
 from django.conf import settings
 from django.core.management import execute_from_command_line
 from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.urls import re_path
 from django.core.wsgi import get_wsgi_application
+
+DB_PATH = os.path.join(os.path.dirname(__file__), "players-temp.db")
+CSV_PATH = os.path.join(os.path.dirname(__file__), "players.csv")
 
 settings.configure(
     DEBUG=True,
@@ -16,11 +20,14 @@ settings.configure(
     ALLOWED_HOSTS=["*"],
     MIDDLEWARE=[],
     INSTALLED_APPS=[],
+    CONN_MAX_AGE=None,
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": DB_PATH
+        }
+    }
 )
-
-DB_PATH = os.path.join(os.path.dirname(__file__), "players-temp.db")
-CSV_PATH = os.path.join(os.path.dirname(__file__), "players.csv")
-
 
 def init_db(db_path=DB_PATH, csv_path=CSV_PATH):
     conn = sqlite3.connect(db_path)
@@ -31,9 +38,14 @@ def init_db(db_path=DB_PATH, csv_path=CSV_PATH):
         CREATE TABLE IF NOT EXISTS players (
             id INTEGER PRIMARY KEY,
             name TEXT,
-            team(s) TEXT,
-            position(s) TEXT,
-
+            team TEXT,
+            position TEXT,
+            debut_year TEXT,
+            retirement_year TEXT,
+            plate_apps TEXT,
+            avg TEXT,
+            obp TEXT,
+            slg TEXT
         )
         """
     )
@@ -50,9 +62,15 @@ def init_db(db_path=DB_PATH, csv_path=CSV_PATH):
                 rows.append(
                     (
                         int(r.get('id')) if r.get('id') else None,
-                        r.get('name'),
-                        r.get('team'),
-                        r.get('position'),
+                        r.get('Player Name'),
+                        r.get('Team(s)'),
+                        r.get('Position(s)'),
+                        r.get('Debut Year'),
+                        r.get('Retirement Year'),
+                        r.get('PA'),
+                        r.get('AVG'),
+                        r.get('OBP'),
+                        r.get('SLG')
                     )
                 )
             if rows:
@@ -60,12 +78,12 @@ def init_db(db_path=DB_PATH, csv_path=CSV_PATH):
                 for row in rows:
                     if row[0] is None:
                         cur.execute(
-                            "INSERT INTO players (name, team, position) VALUES (?, ?, ?)",
-                            (row[1], row[2], row[3]),
+                            "INSERT INTO players (name, team, position, debut_year, retirement_year, plate_apps, avg, obp, slg) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            (row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8], row[9]),
                         )
                     else:
                         cur.execute(
-                            "INSERT OR REPLACE INTO players (id, name, team, position) VALUES (?, ?, ?, ?)",
+                            "INSERT OR REPLACE INTO players (id, name, team, position, debut_year, retirement_year, plate_apps, avg, obp, slg) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                             row,
                         )
         conn.commit()
@@ -76,40 +94,73 @@ init_db()
 
 application = get_wsgi_application()
 
+def select_new_player():
+    conn = sqlite3.connect(DB_PATH)
+    curr = conn.cursor()
+    the_player = curr.execute("SELECT name FROM players ORDER BY RANDOM() LIMIT 1").fetchone()[0]
+    conn.close()
+    with open("./todaysplayer.pkl", "wb") as pick:
+        pickle.dump(the_player, pick)
+    return
 
-def post_id(request):
+def guess_player(request):
+    """
+    
+    """
     if request.method != "POST":
         return HttpResponseBadRequest("POST required")
 
     try:
         body = request.body.decode("utf-8")
+        print(body)
         data = json.loads(body) if body else {}
+        print(data)
     except json.JSONDecodeError:
         return HttpResponseBadRequest("Invalid JSON")
 
     unique_id = data.get("id")
-    if not unique_id:
-        return HttpResponseBadRequest("Missing 'id' field")
+    guess_name = data.get("name")
+    if not unique_id or not guess_name:
+        return HttpResponseBadRequest(f"Missing necessary fields")
+    
+    if guess_name and guess_name == chosen:
+        return JsonResponse({"success": True, "msg": "You did it!"})
+        
+    elif unique_id:
+        #Lookup name associated with id in db
+        #Match guess from id to global chosen
+        #report success or failure
+        return
+    else:
+        return JsonResponse({"success": False, "msg": "Try again"})
 
-    return JsonResponse({"received_id": unique_id})
 
 
-def get_string(request):
-    if request.method != "GET":
-        return HttpResponseBadRequest("GET required")
 
-    value = request.GET.get("value")
+def search_string(request):
+    if request.method != "POST":
+        return HttpResponseBadRequest("POST required")
+
+    value = request.POST.get("value")
+    print(value)
     if value is None:
         return HttpResponseBadRequest("Missing 'value' query parameter")
 
+
+    # TODO: Lookup string in DB and return player
     return JsonResponse({"received_string": value})
 
 
 urlpatterns = [
-    re_path(r"^post-id/$", post_id),
-    re_path(r"^get-string/$", get_string),
+    re_path(r"^guess-player/$", guess_player),
+    re_path(r"^get-players/$", search_string),
 ]
 
 
 if __name__ == "__main__":
+    global chosen
+    if not os.path.exists('./todaysplayer.pickle'):
+        select_new_player()
+    with open("./todaysplayer.pkl", "rb") as pick:
+        chosen  = pickle.load(pick)
     execute_from_command_line(sys.argv)
