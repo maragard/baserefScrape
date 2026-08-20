@@ -3,15 +3,16 @@ import sys
 import os
 import sqlite3
 import csv
-import pickle
 from django.conf import settings
 from django.core.management import execute_from_command_line
 from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.urls import re_path
 from django.core.wsgi import get_wsgi_application
+import re
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "players-temp.db")
 CSV_PATH = os.path.join(os.path.dirname(__file__), "players.csv")
+NAME_DETECTOR = re.compile(r'\w+(\s){1}\w+')
 
 settings.configure(
     DEBUG=True,
@@ -94,13 +95,25 @@ init_db()
 
 application = get_wsgi_application()
 
+def starting_hint(request):
+    if request.method != "GET":
+        return HttpResponseBadRequest("GET required")
+    return JsonResponse({"hint": statline})
+
 def select_new_player():
     conn = sqlite3.connect(DB_PATH)
     curr = conn.cursor()
-    the_player = curr.execute("SELECT name FROM players ORDER BY RANDOM() LIMIT 1").fetchone()[0]
+    the_player = curr.execute("SELECT id, name, avg, obp, slg FROM players ORDER BY RANDOM() LIMIT 1").fetchone()
     conn.close()
-    with open("./todaysplayer.pkl", "wb") as pick:
-        pickle.dump(the_player, pick)
+    with open("./todaysplayer.pkl", "w") as pick:
+        values = [
+            f"'{x}'"
+            if NAME_DETECTOR.match(str(x))
+            else str(x)
+            for x
+            in the_player
+        ]
+        pick.write(', '.join(values))
     return
 
 def guess_player(request):
@@ -120,7 +133,7 @@ def guess_player(request):
 
     unique_id = data.get("id")
     guess_name = data.get("name")
-    if not unique_id or not guess_name:
+    if not unique_id and not guess_name:
         return HttpResponseBadRequest(f"Missing necessary fields")
     
     if guess_name and guess_name == chosen:
@@ -133,8 +146,6 @@ def guess_player(request):
         return
     else:
         return JsonResponse({"success": False, "msg": "Try again"})
-
-
 
 
 def search_string(request):
@@ -154,13 +165,17 @@ def search_string(request):
 urlpatterns = [
     re_path(r"^guess-player/$", guess_player),
     re_path(r"^get-players/$", search_string),
+    re_path(r"^start/$", starting_hint),
 ]
 
 
 if __name__ == "__main__":
     global chosen
-    if not os.path.exists('./todaysplayer.pickle'):
+    global statline
+    if not os.path.exists('./todaysplayer.pkl') or os.path.getsize('./todaysplayer.pkl') == 0:
         select_new_player()
-    with open("./todaysplayer.pkl", "rb") as pick:
-        chosen  = pickle.load(pick)
+    with open("./todaysplayer.pkl", "r") as pick:
+        target = pick.read()
+        chosen = target.split(", ")[1].strip("'")
+        statline = '/'.join(target.split(", ")[2:]).strip("'")
     execute_from_command_line(sys.argv)
