@@ -105,15 +105,16 @@ def select_new_player():
     curr = conn.cursor()
     the_player = curr.execute("SELECT id, name, avg, obp, slg FROM players ORDER BY RANDOM() LIMIT 1").fetchone()
     conn.close()
-    with open("./todaysplayer.pkl", "w") as pick:
-        values = [
-            f"'{x}'"
-            if NAME_DETECTOR.match(str(x))
-            else str(x)
-            for x
-            in the_player
-        ]
-        pick.write(', '.join(values))
+    if the_player:
+        with open("./todaysplayer.pkl", "w") as pick:
+            values = [
+                f"'{x}'"
+                if NAME_DETECTOR.match(str(x))
+                else str(x)
+                for x
+                in the_player
+            ]
+            pick.write(', '.join(values))
     return
 
 def guess_player(request):
