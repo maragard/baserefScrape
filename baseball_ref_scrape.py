@@ -1,4 +1,5 @@
 import argparse
+import csv
 import logging
 import pandas as pd
 import random
@@ -8,6 +9,7 @@ import string
 import time
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor
+from functools import wraps
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -36,6 +38,24 @@ def _has_data(tag):
     return tag.name == 'p' and len(tag.contents) > 1
 
 year = re.compile(r"\d{4}")
+
+def sort_player_names(names: pd.Series) -> pd.Series:
+    """Create last-name, then first-name sort keys for DataFrame.sort_values()."""
+    def sort_key(name: str) -> tuple[str, str]:
+        first, _, last = name.strip().rpartition(" ")
+        return last.casefold(), first.casefold()
+
+    return names.map(sort_key)
+
+def timing(f):
+    @wraps(f)
+    def wrap(*args, **kw):
+        start_time = time.time()
+        result = f(*args, **kw)
+        end_time = time.time()
+        logger.debug(f'func:{f.__name__} args:[{args}, {kw}] took: {(end_time-start_time):2.4f} sec')
+        return result
+    return wrap
 
 class ScrapeFromSeasonBatting:
     
@@ -97,11 +117,15 @@ class ScrapeFromPlayerGlossary:
 
     #     return rows
 
-    def serialize_data(self, filename: str) -> None:
+    def serialize_data(self, filename: str, **method) -> None:
         df = pd.DataFrame(self.data)
         df.rename(columns={"BA": "AVG"}, inplace=True)
         df = df.loc[:, SORTED_COLUMNS]
-        df.to_csv(f"{filename}.csv", index=False)
+        if method == 'append':
+            df_old = pd.read_csv(f"./{filename}.csv")
+            df = pd.concat([df_old, df], axis=1, ignore_index=True)
+        df.sort_values("Player Name", key=sort_player_names, inplace=True)
+        df.to_csv(f"./{filename}.csv", index=False)
         return
 
     def scrape_by_letter(self, letter: str) -> list[str]:
@@ -119,6 +143,7 @@ class ScrapeFromPlayerGlossary:
   
         return players
 
+    @timing
     def build_player_list(self, limit: int | str = None) -> list[str]:
         full_player_list = []
         allchars = list(string.ascii_lowercase)
@@ -209,38 +234,104 @@ class ScrapeFromPlayerGlossary:
                 self.data.append(datum)
                 return
 
-def main():
-    # stats = ScrapeFromSeasonBatting().get_batting_stats()
-    # print(len(stats))
-    # for index, row in enumerate(stats[:20], start=1):
-    #     print(index, row)
-    scraper = ScrapeFromPlayerGlossary()
-    start_time = time.time()
+    @timing
+    def scrape_from_point(self) -> None:
+        """
+        Being scraping from the last player serialized.
+        """
+        players = self.build_player_list(limit='e')
+        logger.debug(players[::420])
+        logger.info(f"{len(players)} to process")
+        # Seek from EOF to read only the final CSV record, rather than loading
+        # the entire file. The first field is the player name.
+        with open("players.csv", "rb") as file:
+            file.seek(0, 2)
+            pos = file.tell() - 1
+            if pos < 0:
+                return
+            file.seek(pos)
+            if file.read(1) == b"\n":
+                pos -= 1
+            while pos >= 0:
+                file.seek(pos)
+                if file.read(1) == b"\n":
+                    pos += 1
+                    break
+                pos -= 1
+            file.seek(max(pos, 0))
+            last_line = file.readline().decode("utf-8-sig").rstrip("\r\n")
 
-    #Logic below can be condensed
-    players = scraper.build_player_list(limit='c')
-    list_acq_time = time.time()
-    logger.info(f"Compiled list of {len(players)} players in {list_acq_time - start_time} seconds")
-    print(players[::420])
-    print(len(players))
-    with ThreadPoolExecutor(max_workers=8) as exec:
-        exec.map(scraper.scrape_player, players)
-    # for player in players[:]:
-    #     time.sleep(30)
-    #     data = scraper.scrape_player(player)
-    #     if data is not None:
-    #         player_data.append(data)
-        # print(scraper.scrape_player(player))
-    scraper.data = [i for i in scraper.data if i is not None]
-    scrape_complete = time.time()
-    logger.info(f"Acquired {len(scraper.data)} in {scrape_complete - start_time} seconds")
-    # print(len(scraper.data)) 
-    # print(scraper.data[-5:])
-    scraper.serialize_data(filename="players")
-    end_time = time.time()
-    logger.info(f"Total runtime: {end_time - start_time} seconds")
+        latest_player = next(csv.reader([last_line]))[0]
+        logger.debug(f"Last player in players.csv: {latest_player}")
+        try:
+            fname, lname = latest_player.lower().split(" ")
+            lp_slug = f"/players/{lname[0]}/{lname[:5]}{fname[:2]}01.shtml"
+            logger.info(lp_slug)
+            separator = players.index(lp_slug)
+        except ValueError:
+            logger.critical(f"Starting point {latest_player} not found in data from site")
+            return
+        else:
+            remaining = players[separator+1:]
+            logger.info(f"{len(remaining)} players")
+            with ThreadPoolExecutor(max_workers=8) as exec:
+                    exec.map(self.scrape_player, remaining)
+            self.data = [i for i in self.data if i is not None]
+            return
+
+    @timing
+    def scrape_all_fresh(self) -> None:
+        players = self.build_player_list(limit='c')
+        logger.debug(players[::420])
+        logger.info(f"{len(players)} to process")
+        with ThreadPoolExecutor(max_workers=8) as exec:
+            exec.map(self.scrape_player, players)
+        self.data = [i for i in self.data if i is not None]
+        return
+
+# def main():
+#     # stats = ScrapeFromSeasonBatting().get_batting_stats()
+#     # print(len(stats))
+#     # for index, row in enumerate(stats[:20], start=1):
+#     #     print(index, row)
+#     scraper = ScrapeFromPlayerGlossary()
+#     start_time = time.time()
+
+#     #Logic below can be condensed
+#     players = scraper.build_player_list(limit='c')
+#     list_acq_time = time.time()
+#     logger.info(f"Compiled list of {len(players)} players in {list_acq_time - start_time} seconds")
+#     print(players[::420])
+#     print(len(players))
+#     with ThreadPoolExecutor(max_workers=8) as exec:
+#         exec.map(scraper.scrape_player, players)
+#     # for player in players[:]:
+#     #     time.sleep(30)
+#     #     data = scraper.scrape_player(player)
+#     #     if data is not None:
+#     #         player_data.append(data)
+#         # print(scraper.scrape_player(player))
+#     scraper.data = [i for i in scraper.data if i is not None]
+#     scrape_complete = time.time()
+#     logger.info(f"Acquired {len(scraper.data)} in {scrape_complete - start_time} seconds")
+#     # print(len(scraper.data)) 
+#     # print(scraper.data[-5:])
+#     scraper.serialize_data(filename="players")
+#     end_time = time.time()
+#     logger.info(f"Total runtime: {end_time - start_time} seconds")
 
 
 
 if __name__ == "__main__":
-    main()
+    scraper = ScrapeFromPlayerGlossary()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("mode", choices=['fresh', 'restart'])
+    # parser.add_argument("--stopping-point", "-sp", action='store', type=str)
+    args = parser.parse_args()
+
+    if args.mode == 'fresh':
+        scraper.scrape_all_fresh()
+        scraper.serialize_data(filename="players", method='append')
+    elif args.mode == 'restart':
+        scraper.scrape_from_point()
+        scraper.serialize_data(filename="players")
