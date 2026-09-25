@@ -1,39 +1,31 @@
-import json
-import sys
-import os
-import sqlite3
 import csv
-from django.conf import settings
-from django.core.management import execute_from_command_line
-from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
-from django.urls import re_path
-from django.core.wsgi import get_wsgi_application
+import json
+import os
 import re
+import sqlite3
+import uvicorn
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, PlainTextResponse
+from urllib.parse import parse_qs
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "players-temp.db")
-CSV_PATH = os.path.join(os.path.dirname(__file__), "players.csv")
-NAME_DETECTOR = re.compile(r'\w+(\s){1}\w+')
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE_DIR, "players-temp.db")
+CSV_PATH = os.path.join(BASE_DIR, "players.csv")
+PLAYER_FILE = os.path.join(BASE_DIR, "todaysplayer.pkl")
 
-settings.configure(
-    DEBUG=True,
-    SECRET_KEY="replace-me",
-    ROOT_URLCONF=__name__,
-    ALLOWED_HOSTS=["*"],
-    MIDDLEWARE=[],
-    INSTALLED_APPS=[],
-    CONN_MAX_AGE=None,
-    DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.sqlite3",
-            "NAME": DB_PATH
-        }
-    }
-)
+NAME_DETECTOR = re.compile(r"\w+(\s){1}\w+")
+
+app = FastAPI()
+application = app
+
+chosen = ""
+statline = ""
+
 
 def init_db(db_path=DB_PATH, csv_path=CSV_PATH):
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
-    # Create a simple players table if not exists
+
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS players (
@@ -51,132 +43,163 @@ def init_db(db_path=DB_PATH, csv_path=CSV_PATH):
         """
     )
 
-    # If CSV exists and table is empty, import rows from CSV
     cur.execute("SELECT COUNT(1) FROM players")
     count = cur.fetchone()[0]
+
     if count == 0 and os.path.exists(csv_path):
-        with open(csv_path, newline='', encoding='latin-1') as f:
-            reader = csv.DictReader(f)
-            rows = []
-            for r in reader:
-                # Expecting columns: id,name,team,position (non-strict)
-                rows.append(
-                    (
-                        int(r.get('id')) if r.get('id') else None,
-                        r.get('Player Name'),
-                        r.get('Team(s)'),
-                        r.get('Position(s)'),
-                        r.get('Debut Year'),
-                        r.get('Retirement Year'),
-                        r.get('PA'),
-                        r.get('AVG'),
-                        r.get('OBP'),
-                        r.get('SLG')
-                    )
+        with open(csv_path, newline="", encoding="latin-1") as file:
+            reader = csv.DictReader(file)
+
+            for row in reader:
+                player_id = int(row["id"]) if row.get("id") else None
+                values = (
+                    row.get("Player Name"),
+                    row.get("Team(s)"),
+                    row.get("Position(s)"),
+                    row.get("Debut Year"),
+                    row.get("Retirement Year"),
+                    row.get("PA"),
+                    row.get("AVG"),
+                    row.get("OBP"),
+                    row.get("SLG"),
                 )
-            if rows:
-                # Insert ignoring id None (will auto-increment)
-                for row in rows:
-                    if row[0] is None:
-                        cur.execute(
-                            "INSERT INTO players (name, team, position, debut_year, retirement_year, plate_apps, avg, obp, slg) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                            (row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8], row[9]),
-                        )
-                    else:
-                        cur.execute(
-                            "INSERT OR REPLACE INTO players (id, name, team, position, debut_year, retirement_year, plate_apps, avg, obp, slg) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                            row,
-                        )
+
+                if player_id is None:
+                    cur.execute(
+                        """
+                        INSERT INTO players
+                        (name, team, position, debut_year, retirement_year,
+                         plate_apps, avg, obp, slg)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        values,
+                    )
+                else:
+                    cur.execute(
+                        """
+                        INSERT OR REPLACE INTO players
+                        (id, name, team, position, debut_year, retirement_year,
+                         plate_apps, avg, obp, slg)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (player_id, *values),
+                    )
+
         conn.commit()
+
     conn.close()
 
-
-init_db()
-
-application = get_wsgi_application()
-
-def starting_hint(request):
-    if request.method != "GET":
-        return HttpResponseBadRequest("GET required")
-    return JsonResponse({"hint": statline})
 
 def select_new_player():
     conn = sqlite3.connect(DB_PATH)
-    curr = conn.cursor()
-    the_player = curr.execute("SELECT id, name, avg, obp, slg FROM players ORDER BY RANDOM() LIMIT 1").fetchone()
+    cursor = conn.cursor()
+
+    player = cursor.execute(
+        """
+        SELECT id, name, avg, obp, slg
+        FROM players
+        ORDER BY RANDOM()
+        LIMIT 1
+        """
+    ).fetchone()
+
     conn.close()
-    if the_player:
-        with open("./todaysplayer.pkl", "w") as pick:
+
+    with open(PLAYER_FILE, "w", encoding="utf-8") as file:
+        if player:
             values = [
-                f"'{x}'"
-                if NAME_DETECTOR.match(str(x))
-                else str(x)
-                for x
-                in the_player
+                f"'{value}'"
+                if NAME_DETECTOR.match(str(value))
+                else str(value)
+                for value in player
             ]
-            pick.write(', '.join(values))
-    return
+            file.write(", ".join(values))
 
-def guess_player(request):
-    """
-    
-    """
-    if request.method != "POST":
-        return HttpResponseBadRequest("POST required")
 
+def load_current_player():
+    global chosen, statline
+
+    if not os.path.exists(PLAYER_FILE) or os.path.getsize(PLAYER_FILE) == 0:
+        select_new_player()
+
+    if not os.path.exists(PLAYER_FILE):
+        return
+
+    with open(PLAYER_FILE, "r", encoding="utf-8") as file:
+        target = file.read()
+
+    parts = target.split(", ")
+    if len(parts) >= 5:
+        chosen = parts[1].strip("'")
+        statline = "/".join(parts[2:]).strip("'")
+
+
+@app.get("/start")
+async def starting_info():
+    return {"hint": statline}
+
+
+@app.post("/guess-player")
+async def guess_player(request: Request):
     try:
-        body = request.body.decode("utf-8")
-        print(body)
-        data = json.loads(body) if body else {}
-        print(data)
-    except json.JSONDecodeError:
-        return HttpResponseBadRequest("Invalid JSON")
+        data = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return PlainTextResponse("Invalid JSON", status_code=400)
 
     unique_id = data.get("id")
     guess_name = data.get("name")
-    if not unique_id and not guess_name:
-        return HttpResponseBadRequest(f"Missing necessary fields")
-    
+
+    if unique_id is None and not guess_name:
+        return PlainTextResponse("Missing necessary fields", status_code=400)
+
     if guess_name and guess_name == chosen:
-        return JsonResponse({"success": True, "msg": "You did it!"})
-        
-    elif unique_id:
-        #Lookup name associated with id in db
-        #Match guess from id to global chosen
-        #report success or failure
-        return
+        return {"success": True, "msg": "You did it!"}
+
+    if unique_id is not None:
+        conn = sqlite3.connect(DB_PATH)
+        player = conn.execute(
+            "SELECT name FROM players WHERE id = ?",
+            (unique_id,),
+        ).fetchone()
+        conn.close()
+
+        success = bool(player and player[0] == chosen)
+        return {
+            "success": success,
+            "msg": "You did it!" if success else "Try again",
+        }
+
+    return {"success": False, "msg": "Try again"}
+
+
+@app.post("/get-players")
+async def search_string(request: Request):
+    body = await request.body()
+    content_type = request.headers.get("content-type", "")
+
+    value = None
+
+    if "application/json" in content_type:
+        try:
+            value = json.loads(body.decode("utf-8")).get("value")
+        except (json.JSONDecodeError, ValueError):
+            return PlainTextResponse("Invalid JSON", status_code=400)
     else:
-        return JsonResponse({"success": False, "msg": "Try again"})
+        values = parse_qs(body.decode("utf-8"))
+        value = values.get("value", [None])[0]
 
-
-def search_string(request):
-    if request.method != "POST":
-        return HttpResponseBadRequest("POST required")
-
-    value = request.POST.get("value")
-    print(value)
     if value is None:
-        return HttpResponseBadRequest("Missing 'value' query parameter")
+        return PlainTextResponse(
+            "Missing 'value' query parameter",
+            status_code=400,
+        )
+
+    return {"received_string": value}
 
 
-    # TODO: Lookup string in DB and return player
-    return JsonResponse({"received_string": value})
-
-
-urlpatterns = [
-    re_path(r"^guess-player/$", guess_player),
-    re_path(r"^get-players/$", search_string),
-    re_path(r"^start/$", starting_hint),
-]
+init_db()
+load_current_player()
 
 
 if __name__ == "__main__":
-    global chosen
-    global statline
-    if not os.path.exists('./todaysplayer.pkl') or os.path.getsize('./todaysplayer.pkl') == 0:
-        select_new_player()
-    with open("./todaysplayer.pkl", "r") as pick:
-        target = pick.read()
-        chosen = target.split(", ")[1].strip("'")
-        statline = '/'.join(target.split(", ")[2:]).strip("'")
-    execute_from_command_line(sys.argv)
+    uvicorn.run(app, host="127.0.0.1", port=8000)
