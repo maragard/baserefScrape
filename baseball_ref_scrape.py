@@ -123,8 +123,8 @@ class ScrapeFromPlayerGlossary:
         df = df.loc[:, SORTED_COLUMNS]
         if method == 'append':
             df_old = pd.read_csv(f"./{filename}.csv")
-            df = pd.concat([df_old, df], axis=1, ignore_index=True)
-        df.sort_values("Player Name", key=sort_player_names, inplace=True)
+            df = pd.concat([df_old, df], ignore_index=True)
+        # df.sort_values("Player Name", key=sort_player_names, inplace=True)
         df.to_csv(f"./{filename}.csv", index=False)
         return
 
@@ -275,7 +275,7 @@ class ScrapeFromPlayerGlossary:
             remaining = players[separator+1:]
             logger.info(f"{len(remaining)} players")
             with ThreadPoolExecutor(max_workers=8) as exec:
-                    exec.map(self.scrape_player, remaining)
+                exec.map(self.scrape_player, remaining)
             self.data = [i for i in self.data if i is not None]
             return
 
