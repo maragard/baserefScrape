@@ -117,13 +117,20 @@ class ScrapeFromPlayerGlossary:
 
     #     return rows
 
-    def serialize_data(self, filename: str, **method) -> None:
+    def serialize_data(self, filename: str, **kwarg) -> None:
+        if not bool(self.data):
+            logger.debug("No data")
+            return
+        logger.debug(f"Data: {len(df)} rows\n")
         df = pd.DataFrame(self.data)
         df.rename(columns={"BA": "AVG"}, inplace=True)
         df = df.loc[:, SORTED_COLUMNS]
-        if method == 'append':
+        if kwarg.get('method') == 'append':
             df_old = pd.read_csv(f"./{filename}.csv")
-            df = pd.concat([df_old, df], ignore_index=True)
+            new_df = pd.concat([df_old, df], ignore_index=True)
+            logger.debug(len(new_df))
+            new_df.to_csv(f"./{filename}.csv", index=False)
+            return
         # df.sort_values("Player Name", key=sort_player_names, inplace=True)
         df.to_csv(f"./{filename}.csv", index=False)
         return
@@ -239,7 +246,7 @@ class ScrapeFromPlayerGlossary:
         """
         Being scraping from the last player serialized.
         """
-        players = self.build_player_list(limit='e')
+        players = self.build_player_list(limit='d')
         logger.debug(players[::420])
         logger.info(f"{len(players)} to process")
         # Seek from EOF to read only the final CSV record, rather than loading
@@ -258,11 +265,22 @@ class ScrapeFromPlayerGlossary:
                     pos += 1
                     break
                 pos -= 1
+            # Locate the beginning of the record immediately before the last one.
+            fallback_pos = pos - 2
+            while fallback_pos >= 0:
+                file.seek(fallback_pos)
+                if file.read(1) == b"\n":
+                    fallback_pos += 1
+                    break
+                fallback_pos -= 1
+            file.seek(max(fallback_pos, 0))
+            fall_back = file.readline().decode("utf-8-sig").rstrip("\r\n")
             file.seek(max(pos, 0))
             last_line = file.readline().decode("utf-8-sig").rstrip("\r\n")
 
         latest_player = next(csv.reader([last_line]))[0]
-        logger.debug(f"Last player in players.csv: {latest_player}")
+        backup_player = next(csv.reader([fall_back]))[0]
+        logger.debug(f"Last player in players.csv: {latest_player}\n\t\t\t\t\t\tBackup player: {backup_player}")
         try:
             fname, lname = latest_player.lower().split(" ")
             lp_slug = f"/players/{lname[0]}/{lname[:5]}{fname[:2]}01.shtml"
