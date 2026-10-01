@@ -121,8 +121,8 @@ class ScrapeFromPlayerGlossary:
         if not bool(self.data):
             logger.debug("No data")
             return
-        logger.debug(f"Data: {len(df)} rows\n")
         df = pd.DataFrame(self.data)
+        logger.debug(f"Data: {len(df)} rows\n")
         df.rename(columns={"BA": "AVG"}, inplace=True)
         df = df.loc[:, SORTED_COLUMNS]
         if kwarg.get('method') == 'append':
