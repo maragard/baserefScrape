@@ -349,7 +349,9 @@ if __name__ == "__main__":
 
     if args.mode == 'fresh':
         scraper.scrape_all_fresh()
-        scraper.serialize_data(filename="players", method='append')
+        scraper.serialize_data(filename="players")
     elif args.mode == 'restart':
         scraper.scrape_from_point()
-        scraper.serialize_data(filename="players")
+        scraper.serialize_data(filename="players", method='append')
+    else:
+        logger.error(f"Invalid mode: {args.mode}")
