@@ -8,6 +8,7 @@ import requests
 import string
 import time
 from bs4 import BeautifulSoup
+from bs4.element import Tag
 from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
 
@@ -30,11 +31,11 @@ DATA_COLS = ["b_pa", "b_batting_avg", "b_onbase_perc", "b_slugging_perc"]
 SORTED_COLUMNS = ["Player Name", "Position(s)", "Team(s)", "Debut Year", "Retirement Year", "PA", "AVG", "OBP", "SLG"]
 
 #Filter func for use with BeautifulSoup's find_all() to find parts of rows we need
-def _column_we_care_about(tag):
+def _column_we_care_about(tag: Tag) -> bool:
     return tag.name in ['th', 'td'] and'data-stat' in tag.attrs.keys() and tag.get('data-stat') in DATA_COLS
 
 #Filter func for use with BeautifulSoup's find_all() to find parts of the 'info' div that we need
-def _has_data(tag):
+def _has_data(tag: Tag) -> bool:
     return tag.name == 'p' and len(tag.contents) > 1
 
 year = re.compile(r"\d{4}")
@@ -135,6 +136,7 @@ class ScrapeFromPlayerGlossary:
         df.to_csv(f"./{filename}.csv", index=False)
         return
 
+    @timing
     def scrape_by_letter(self, letter: str) -> list[str]:
         scrape_url = f"{self.url}players/{letter}/"
         try:
@@ -171,7 +173,7 @@ class ScrapeFromPlayerGlossary:
         return full_player_list
     
     def scrape_player(self, player_slug: str) -> None:
-        time.sleep(random.randint(10, 30))
+        time.sleep(random.randint(10, 45))
         scrape_url = f"{self.url}{player_slug}"
         try:
             resp = requests.get(scrape_url)
@@ -189,6 +191,7 @@ class ScrapeFromPlayerGlossary:
         if table is None:
             logger.warning(f"{name} -- Not Eligible: No batting data")
             self.data.append(None)
+            time.sleep(60)
             return
         
         lifetime_batting_data = table.find('tr', id=f"{self.table_id}.Yrs")
@@ -203,8 +206,10 @@ class ScrapeFromPlayerGlossary:
             if int(datum['PA']) < 900:
                 logger.warning(f"{name} -- Not Eligible: Insufficient batting data") 
                 self.data.append(None)
+                time.sleep(60)
+                return
             else:
-                # Teams mmust be harvested from the tbody
+                # Teams must be harvested from the tbody
                 teams = set([
                     row.find('td', attrs={'data-stat': 'team_name_abbr'}).get_text(strip=True)
                     for row 
@@ -239,6 +244,7 @@ class ScrapeFromPlayerGlossary:
                 # print(datum)
                 logger.info(f"{name} -- Successfully scraped")
                 self.data.append(datum)
+                time.sleep(30)
                 return
 
     @timing
@@ -246,7 +252,7 @@ class ScrapeFromPlayerGlossary:
         """
         Being scraping from the last player serialized.
         """
-        players = self.build_player_list(limit='d')
+        players = self.build_player_list(limit='j')
         logger.debug(players[::420])
         logger.info(f"{len(players)} to process")
         # Seek from EOF to read only the final CSV record, rather than loading
