@@ -25,8 +25,6 @@ logstream.setFormatter(stream_format)
 logger.addHandler(logstream)
 logger.addHandler(logfile)
 
-# Add: debut year, retirement year(if eligible), team(s) played for
-
 DATA_COLS = ["b_pa", "b_batting_avg", "b_onbase_perc", "b_slugging_perc"]
 SORTED_COLUMNS = ["Player Name", "Position(s)", "Team(s)", "Debut Year", "Retirement Year", "PA", "AVG", "OBP", "SLG"]
 
@@ -103,20 +101,6 @@ class ScrapeFromPlayerGlossary:
     def __init__(self):
         self.data = []
         return
-
-    # def parse_table(self, table):
-    #     headers = [th.get_text(strip=True) for th in table.find("thead").find_all("th") if _column_we_care_about(th.get('data-stat'))]
-    #     rows = []
-
-    #     for row in table("tr", id=f"{self.table_id}.Yrs"):
-    #         print(row)
-    #         cells = [cell.get_text(strip=True) for cell in row("td") if _column_we_care_about(cell.get('data-stat'))]
-    #         if not cells:
-    #             continue
-    #         row_data = dict(zip(headers, cells))
-    #         rows.append(row_data)
-
-    #     return rows
 
     def serialize_data(self, filename: str, **kwarg) -> None:
         if not bool(self.data):
@@ -325,38 +309,6 @@ class ScrapeFromPlayerGlossary:
             exec.map(self.scrape_player, players)
         self.data = [i for i in self.data if i is not None]
         return
-
-# def main():
-#     # stats = ScrapeFromSeasonBatting().get_batting_stats()
-#     # print(len(stats))
-#     # for index, row in enumerate(stats[:20], start=1):
-#     #     print(index, row)
-#     scraper = ScrapeFromPlayerGlossary()
-#     start_time = time.time()
-
-#     #Logic below can be condensed
-#     players = scraper.build_player_list(limit='c')
-#     list_acq_time = time.time()
-#     logger.info(f"Compiled list of {len(players)} players in {list_acq_time - start_time} seconds")
-#     print(players[::420])
-#     print(len(players))
-#     with ThreadPoolExecutor(max_workers=8) as exec:
-#         exec.map(scraper.scrape_player, players)
-#     # for player in players[:]:
-#     #     time.sleep(30)
-#     #     data = scraper.scrape_player(player)
-#     #     if data is not None:
-#     #         player_data.append(data)
-#         # print(scraper.scrape_player(player))
-#     scraper.data = [i for i in scraper.data if i is not None]
-#     scrape_complete = time.time()
-#     logger.info(f"Acquired {len(scraper.data)} in {scrape_complete - start_time} seconds")
-#     # print(len(scraper.data)) 
-#     # print(scraper.data[-5:])
-#     scraper.serialize_data(filename="players")
-#     end_time = time.time()
-#     logger.info(f"Total runtime: {end_time - start_time} seconds")
-
 
 
 if __name__ == "__main__":
