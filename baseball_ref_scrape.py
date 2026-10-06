@@ -7,15 +7,15 @@ import re
 import requests
 import string
 import time
-from bs4 import BeautifulSoup
-from bs4.element import Tag
+from bs4 import BeautifulSoup, element
 from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
+from logging.handlers import RotatingFileHandler
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 file_format = logging.Formatter('%(asctime)s %(threadName)s %(levelname)s %(message)s')
-logfile = logging.FileHandler('base_scrape.log', mode='w')
+logfile = RotatingFileHandler('base_scrape.log', mode='w', backupCount=3)
 logfile.setLevel(logging.DEBUG)
 logfile.setFormatter(file_format)
 stream_format = logging.Formatter('%(threadName)s %(levelname)s %(message)s')
@@ -31,11 +31,11 @@ DATA_COLS = ["b_pa", "b_batting_avg", "b_onbase_perc", "b_slugging_perc"]
 SORTED_COLUMNS = ["Player Name", "Position(s)", "Team(s)", "Debut Year", "Retirement Year", "PA", "AVG", "OBP", "SLG"]
 
 #Filter func for use with BeautifulSoup's find_all() to find parts of rows we need
-def _column_we_care_about(tag: Tag) -> bool:
+def _column_we_care_about(tag: element.Tag) -> bool:
     return tag.name in ['th', 'td'] and'data-stat' in tag.attrs.keys() and tag.get('data-stat') in DATA_COLS
 
 #Filter func for use with BeautifulSoup's find_all() to find parts of the 'info' div that we need
-def _has_data(tag: Tag) -> bool:
+def _has_data(tag: element.Tag) -> bool:
     return tag.name == 'p' and len(tag.contents) > 1
 
 year = re.compile(r"\d{4}")
@@ -122,12 +122,12 @@ class ScrapeFromPlayerGlossary:
         if not bool(self.data):
             logger.debug("No data")
             return
-        df = pd.DataFrame(self.data)
+        df = pd.DataFrame(self.data, dtype=str)
         logger.debug(f"Data: {len(df)} rows\n")
         df.rename(columns={"BA": "AVG"}, inplace=True)
         df = df.loc[:, SORTED_COLUMNS]
         if kwarg.get('method') == 'append':
-            df_old = pd.read_csv(f"./{filename}.csv")
+            df_old = pd.read_csv(f"./{filename}.csv", dtype=str)
             new_df = pd.concat([df_old, df], ignore_index=True)
             logger.debug(len(new_df))
             new_df.to_csv(f"./{filename}.csv", index=False)
@@ -153,23 +153,36 @@ class ScrapeFromPlayerGlossary:
         return players
 
     @timing
-    def build_player_list(self, limit: int | str = None) -> list[str]:
+    def build_player_list(self, start: str = None, limit: str = None) -> list[str]:
         full_player_list = []
         allchars = list(string.ascii_lowercase)
+        if start is not None:
+            if start not in allchars:
+                logger.critical(f"Incorrect input provided for 'start': {start}")
+                return full_player_list
+            allchars = allchars[allchars.index(start):]
+
+        if limit not in allchars:
+            logger.critical(f"Incorrect input provided for 'limit': {limit}")
+            return full_player_list
+        
+        if isinstance(start, str) and isinstance(limit, str):
+            if limit not in allchars or allchars.index(limit) <= 0:
+                logger.critical(f"'limit' must be after 'start': {limit}")
+                return full_player_list
+
         #Limit on how much we scrape
-        if (isinstance(limit, int) and limit < len(allchars)) or limit is None:
-            for char in allchars[:limit]:
-                full_player_list += self.scrape_by_letter(char)
-                time.sleep(random.randint(10, 30))
-        elif isinstance(limit, str) and limit in allchars:
+        if limit:
             for char in allchars:
-                if char is not limit:
+                if char != limit:
                     full_player_list += self.scrape_by_letter(char)
                     time.sleep(random.randint(10, 30))
                 else:
                     break
         else:
-            logger.critical(f"Incorrect input provided for 'limit': {limit}")
+            for char in allchars:
+                full_player_list += self.scrape_by_letter(char)
+                time.sleep(random.randint(10, 30))
         return full_player_list
     
     def scrape_player(self, player_slug: str) -> None:
@@ -252,7 +265,7 @@ class ScrapeFromPlayerGlossary:
         """
         Being scraping from the last player serialized.
         """
-        players = self.build_player_list(limit='j')
+        players = self.build_player_list(limit='t')
         logger.debug(players[::420])
         logger.info(f"{len(players)} to process")
         # Seek from EOF to read only the final CSV record, rather than loading
@@ -280,9 +293,9 @@ class ScrapeFromPlayerGlossary:
                     break
                 fallback_pos -= 1
             file.seek(max(fallback_pos, 0))
-            fall_back = file.readline().decode("utf-8-sig").rstrip("\r\n")
+            fall_back = file.readline().decode("utf-8").rstrip("\r\n")
             file.seek(max(pos, 0))
-            last_line = file.readline().decode("utf-8-sig").rstrip("\r\n")
+            last_line = file.readline().decode("utf-8").rstrip("\r\n")
 
         latest_player = next(csv.reader([last_line]))[0]
         backup_player = next(csv.reader([fall_back]))[0]
