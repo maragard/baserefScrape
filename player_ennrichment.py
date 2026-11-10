@@ -8,9 +8,9 @@ import requests as req
 from bs4 import BeautifulSoup, element
 from concurrent.futures import ThreadPoolExecutor
 
-bad_team = re.compile("(,)?(\\dTM)")
+bad_team = re.compile("\\dTM")
 
-def position_filter(s: str):
+def position_filter(s: str) -> str:
     pos = s.lower()
     if pos.startswith("first basem"):
         return "1B"
@@ -24,11 +24,11 @@ def position_filter(s: str):
         return "DH"
     elif pos.startswith("shortstop"):
         return "SS"
-    elif pos.startswith("left field") or pos.startswith("leftfielder"):
+    elif pos.startswith(("leftfielder", "left field")):
         return "LF"
-    elif pos.startswith("center field") or pos.startswith("centerfielder"):
+    elif pos.startswith(("centerfielder", "center field")):
         return "CF"
-    elif pos.startswith("right field") or pos.startswith("rightfielder"):
+    elif pos.startswith(("rightfielder", "right field")):
         return "RF"
     elif pos.startswith("outfielder"):
         return "OF"
@@ -40,14 +40,14 @@ def position_filter(s: str):
 
 def main():
     new_rows = []
-    with open("./players.csv", newline='', encoding="latin-1") as f:
+    with open("./players.csv", newline='') as f:
         reader = csv.DictReader(f)
         dataset = list(reader)
         cols = reader.fieldnames
     # dataset = pd.read_csv("./players.csv")
     # names = list(dataset['Player Name'])
     # print(names)
-    for row in dataset[:20]:
+    for row in dataset:
         print(row['Player Name'])
         # Fix teams
         print(row['Team(s)'])
@@ -82,10 +82,13 @@ def main():
             #   b. Jersey Number
 
             #   c.
-
-            
-            
-
+        new_rows.append(row)
+                     
+    print(new_rows)
+    with open('players_enhanced.csv', 'w', newline='') as newfile:
+        writer = csv.DictWriter(newfile, fieldnames=cols)
+        writer.writeheader()
+        writer.writerows(new_rows)
     return
 
 
@@ -96,7 +99,7 @@ def build_teams_negro_leagues():
     Build dictionary of teams from list.
     """
     def _sufficient_games(franchise: element.Tag):
-        return franchise.name == 'tr' and int(franchise('td')[2].get_text()) >= 50
+        return franchise.name == 'tr' and int(franchise('td')[2].get_text()) >= 1
 
     URL = "https://www.seamheads.com/NegroLgs/history.php?tab=tm_at&first=1886&last=1948&lgID=All&lgType=N"
     abbrs = []
@@ -129,9 +132,12 @@ def build_teams_negro_leagues():
             json.dump(final, file)
     return
 
+def scrape_negro_leagues_seamhead():
+    URL = "https://www.seamheads.com/NegroLgs/history.php?tab=bat_basic_at&first=1886&last=1948&lgID=All&lgType=N&HOF=All&pos=All&bats=All&minPA=500&results=500&sort=PA_a"
+    return
 
 
 if __name__ == "__main__":
     main()
     # COMPLETE
-    #build_teams_negro_leagues()
+    # build_teams_negro_leagues()
