@@ -7,6 +7,7 @@ import re
 import requests as req
 from bs4 import BeautifulSoup, element
 from concurrent.futures import ThreadPoolExecutor
+from time import sleep
 
 bad_team = re.compile("\\dTM")
 
@@ -47,7 +48,7 @@ def main():
     # dataset = pd.read_csv("./players.csv")
     # names = list(dataset['Player Name'])
     # print(names)
-    for row in dataset:
+    for row in dataset[:20]:
         print(row['Player Name'])
         # Fix teams
         print(row['Team(s)'])
@@ -60,35 +61,47 @@ def main():
         print(new_pos)
         row['Position(s)'] = new_pos
         # Rescrape
-        # attempt = 1
-        # fname, lname = row['Player Name'].lower().split(" ")
-        # slug = f"players/{lname[0]}/{lname[:5]}{fname[:2]}{attempt:0>2}.shtml"
-        # url = f"https://www.baseball-reference.com/{slug}"
-        # try:
-        #     resp = req.get(url)
-        #     resp.raise_for_status()
-        # except req.RequestException as e:
-        #     return
-        # else:
-        #     print(resp)
-            # soup = BeautifulSoup(resp.content, 'lxml', from_encoding="latin-1")
+        attempt = 1
+        fname, lname = row['Player Name'].lower().split(" ")
+        while True:
+            slug = f"players/{lname[0]}/{lname[:5]}{fname[:2]}{attempt:0>2}.shtml"
+            url = f"https://www.baseball-reference.com/{slug}"
+            try:
+                resp = req.get(url)
+                resp.raise_for_status()
+            except req.RequestException as e:
+                raise e
+            
+            soup = BeautifulSoup(resp.content, 'lxml')
+            confirm_info: element.Tag = soup.find('div', id="meta")
+            confirm_row: element.Tag = soup.find('tr', id="players_standard_batting.Yrs")
+            if confirm_info and confirm_row:
+                # name_check = (confirm_info.find('h1').get_text(strip=True) == row['Player Name'])
+                plate_check = (confirm_row.find('td', attrs={'data-stat':'b_pa'}).get_text(strip=True) == row['PA'])
+                avg_check = (confirm_row.find('td', attrs={'data-stat':'b_batting_avg'}).get_text(strip=True) == row['AVG'][1:])
+                obp_check = (confirm_row.find('td', attrs={'data-stat':'b_onbase_perc'}).get_text(strip=True) == row['OBP'][1:])
+                slg_check = (confirm_row.find('td', attrs={'data-stat':'b_slugging_perc'}).get_text(strip=True) == row['SLG'][1:])
+                if all([plate_check, avg_check, obp_check, slg_check]):
+                    break
 
-            # Step 1: Confirm that this is the one we are looking for
+            sleep(15)
+            attempt += 1
+        # Step 2: Fetch what we are looking for
+        if row['Retirement Year'] == 'Not Found':
+            last_year_row = soup.find('table', attrs={'id':'players_standard_batting'}).find('tbody')('tr')[-1]
+            print(last_year_row)
+        #   a. Last team played for
 
-            # Step 2: Fetch what we are looking for
+        #   b. Jersey Number
 
-            #   a. Last team played for
-
-            #   b. Jersey Number
-
-            #   c.
+        #   c.
         new_rows.append(row)
                      
     print(new_rows)
-    with open('players_enhanced.csv', 'w', newline='') as newfile:
-        writer = csv.DictWriter(newfile, fieldnames=cols)
-        writer.writeheader()
-        writer.writerows(new_rows)
+    # with open('players_enhanced.csv', 'w', newline='') as newfile:
+    #     writer = csv.DictWriter(newfile, fieldnames=cols)
+    #     writer.writeheader()
+    #     writer.writerows(new_rows)
     return
 
 
