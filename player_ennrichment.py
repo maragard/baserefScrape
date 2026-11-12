@@ -145,7 +145,7 @@ def main():
                     else:
                         row['Retirement Year'] = "Active"
                 death_date = soup.find('span', id='necro-death').get('data-death') if soup.find('span', id='necro-death') else None
-                
+
                 row['Died'] = 'Unknown'
                 #   a. Last team played for
                 row['Final Team'] = data_table(_rows_no_spacers)[-1].find('td', attrs={'data-stat': 'team_name_abbr'}).text
@@ -216,7 +216,7 @@ def build_teams_negro_leagues():
                 abbrs.append(team_abbrviate)
 
     print(abbrs)
-    check = pd.Series(abbrs)
+    check = (len(set(abbrs)) == len(abbrs))
     print(check)
     if not check.duplicated().any():
         final = {a: b for a, b in zip(abbrs, names)}
@@ -226,11 +226,59 @@ def build_teams_negro_leagues():
     return
 
 def scrape_negro_leagues_seamhead():
-    URL = "https://www.seamheads.com/NegroLgs/history.php?tab=bat_basic_at&first=1886&last=1948&lgID=All&lgType=N&HOF=All&pos=All&bats=All&minPA=500&results=500&sort=PA_a"
+    def _sufficient_plate_apps(row: element.Tag):
+        return row.name == 'tr' and int(row('td')[5].text) >= 900
+
+    def _player_info(tag: element.Tag):
+        return tag.name == 'div' and tag.get('style') == "height: 180px; width:375px; float:left; border:3px solid #3A506B; padding-left:5px; padding-right:5px;"
+
+    URL_BASE = "https://www.seamheads.com/NegroLgs/"
+    SEARCH = "history.php?tab=bat_basic_at&first=1886&last=1948&lgID=All&lgType=All&HOF=All&pos=All&bats=All&minPA=900&results=500&sort=PA_a"
+    PLAYER_DATA_MOD = "&tab=bat&mult=Indiv&sort=Year_a&adv_sort=Year_a"
+    try:
+        resp = req.get(f"{URL_BASE}{SEARCH}")
+    except req.RequestException as e:
+        raise e
+    else:
+        main_data_soup = BeautifulSoup(resp.content, 'lxml')
+        eligible_players = main_data_soup.find('tbody')(_sufficient_plate_apps)
+        # print(eligible_players)
+        print(len(eligible_players))
+        for player in eligible_players[33::42]:
+            player_url: str = player('td')[1].a.get('href')
+            try:
+                data_resp = req.get(f"{URL_BASE}{player_url}{PLAYER_DATA_MOD}")
+            except req.exceptions.HTTPError:
+                raise e
+            else:
+                data_soup = BeautifulSoup(data_resp.content, 'lxml')
+                life_data: element.Tag = data_soup(_player_info)[0]
+                all_life_text = life_data.get_text().split()
+                print(life_data.h1.get_text())
+                print(all_life_text)
+                try:
+                    birth_info_start = all_life_text.index("Born:")
+                except ValueError:
+                    print("Birth unknown")
+                else:
+                    print(birth_info_start)
+                    print(' '.join(all_life_text[birth_info_start:(birth_info_start+4)]))
+
+                try:
+                    death_info_start = all_life_text.index("Died:")
+                except ValueError:
+                    print("Death unknown")
+                else:
+                    print(death_info_start)
+                    print(' '.join(all_life_text[death_info_start:(death_info_start+4)]))
+                
+            sleep(15)
+
     return
 
 
 if __name__ == "__main__":
-    main()
+    # main()
     # COMPLETE
     # build_teams_negro_leagues()
+    scrape_negro_leagues_seamhead()
