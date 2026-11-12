@@ -1,7 +1,6 @@
 import csv
 import json
 import logging
-import pandas as pd
 import random
 import re
 import requests as req
@@ -10,8 +9,8 @@ from concurrent.futures import ThreadPoolExecutor
 from statistics import mode
 from time import sleep
 
-bad_team = re.compile("\\dTM")
-bad_league = re.compile("\\dLG")
+bad_team = re.compile(r"\dTM|^Did not play")
+bad_league = re.compile(r"\dLG")
 
 def position_filter(s: str) -> str:
     if s in {"1B", "2B", "3B", "C", "DH", "SS", "LF", "CF", "RF", "OF", "P"}:
@@ -44,13 +43,50 @@ def position_filter(s: str) -> str:
         return ""
 
 
+def rescrape_player(row):
+    url = f"https://www.baseball-reference.com/search/search.fcgi?hint=&search={row['Player Name']}&pid=&idx="
+    try:
+        resp = req.get(url)
+        resp.raise_for_status()
+    except req.RequestException as e:
+        raise e
+    else:
+        if '/players/' in resp.url:
+            print("redirected to player")
+            row['URL'] = resp.url
+            soup = BeautifulSoup(resp.content, 'lxml')
+        elif 'search' in resp.url:
+            print("searching for player")
+            search_soup = BeautifulSoup(resp.content, 'lxml')
+            for search_result in search_soup('div', class_='search-item'):
+                try:
+                    career_start, career_final = re.findall(r'\d{4}', search_result.a.text)
+                except ValueError:
+                    # Someone with a 1 year career is not making it into our dataset
+                    continue
+                if row['Debut Year'] == career_start and (row['Retirement Year'] == career_final or row['Retirement Year'] == 'Not Found'):
+                    print('found player')
+                    row['URL'] = "https://www.baseball-reference.com" + search_result.a.get("href")
+                    sleep(random.randint(10, 15))
+                    try:
+                        player_resp = req.get(row['URL'])
+                        player_resp.raise_for_status()
+                    except req.RequestException as e:
+                        raise e
+                    else:
+                        soup = BeautifulSoup(player_resp.content, 'lxml')
+                        break
+                sleep(random.randint(5, 15))
+    return soup
+
+
 def main():
     new_rows = []
     with open("./players.csv", newline='') as f:
         reader = csv.DictReader(f)
         dataset = list(reader)
         # cols = reader.fieldnames
-    for row in dataset[67::420]:
+    for row in dataset:
         print(row['Player Name'])
         # Fix statistics
         avg = float(row['AVG'])
@@ -59,18 +95,18 @@ def main():
         row['OBP'] = f"{obp:.3f}"[1:]
         slg = float(row['SLG'])
         row['SLG'] = f"{slg:.3f}"[1:]
-        # # Fix teams
-        # print(row['Team(s)'])
-        # new_teams = ",".join(
-        #                     [
-        #                         team
-        #                         for team
-        #                         in row['Team(s)'].split(',')
-        #                         if not bad_team.match(team)
-        #                     ]
-        #                 )
-        # print(new_teams)
-        # row['Team(s)'] = new_teams
+        # # Fix teams (may get overwritten, we don't care)
+        print(row['Team(s)'])
+        new_teams = ",".join(
+                            [
+                                team
+                                for team
+                                in row['Team(s)'].split(',')
+                                if not bad_team.match(team)
+                            ]
+                        )
+        print(new_teams)
+        row['Team(s)'] = new_teams
         # Reformat Positions
         print(row['Position(s)'])
         new_pos = ",".join(
@@ -84,89 +120,68 @@ def main():
         print(new_pos)
         row['Position(s)'] = new_pos
         # Rescrape
-        print("beginning rescrape")
-        url = f"https://www.baseball-reference.com/search/search.fcgi?hint=&search={row['Player Name']}&pid=&idx="
         try:
-            resp = req.get(url)
-            resp.raise_for_status()
-        except req.RequestException as e:
-            raise e
-        else: 
-            # else block MUST end in a state that scraping can continue under "finally" or fail out
-            if '/players/' in resp.url:
-                # Branch 1: We get redirected to player page
-                print("redirected to player")
-                row['URL'] = resp.url
-                soup = BeautifulSoup(resp.content, 'lxml')
-            elif 'search' in resp.url:
-                # Branch 2: We remain on search page
-                print("searching for player")
-                search_soup = BeautifulSoup(resp.content, 'lxml')
-                for search_result in search_soup('div', class_='search-item'):
-                    career_start, career_final = re.findall(r'\d{4}', search_result.a.text)
-                    if row['Debut Year'] == career_start and (row['Retirement Year'] == career_final or row['Retirement Year'] == 'Not Found'):
-                        print('found player')
-                        row['URL'] = "https://www.baseball-reference.com" + search_result.a.get("href")
-                        sleep(random.randint(10, 15))
-                        try:
-                            player_resp = req.get(row['URL'])
-                            player_resp.raise_for_status()
-                        except req.RequestException as e:
-                            raise e
-                        else:
-                            soup = BeautifulSoup(player_resp.content, 'lxml')
-                            break
-                    sleep(random.randint(5, 15))
+            print("attempting rescrape")
+            soup = rescrape_player(row)
+        except:
+            print("rescrape failed")
+            new_rows.append(row)
+            continue
         finally:
             def _rows_no_spacers(tag: element.Tag) -> bool:
                 return tag.name == 'tr' and (not tag.get('class') or 'spacer' not in tag.get('class'))
-
             sleep(random.randint(10, 25))
-            data_table = soup.find('table', attrs={'id':'players_standard_batting'}).find('tbody')
-            # Step 2: Fetch what we are looking for
-            row['Born'] = soup.find('span', id='necro-birth').get('data-birth')
-            row['Died'] = soup.find('span', id='necro-death').get('data-death') if soup.find('span', id='necro-death') else 'Alive'
-            if row['Retirement Year'] == 'Not Found':
-                if row['Died'] != 'Alive':
-                    last_year_row = data_table('tr')[-1]
-                    row['Retirement Year'] = last_year_row.th.text
-                else:
-                    row['Retirement Year'] = "Active"
-            #   a. Last team played for
-            row['Final Team'] = data_table(_rows_no_spacers)[-1].find('td', attrs={'data-stat': 'team_name_abbr'}).text
-            all_teams = [
-                tag.find('td', attrs={'data-stat': 'team_name_abbr'}).text 
-                for tag 
-                in data_table(_rows_no_spacers)
-                if not bad_team.match(tag.find('td', attrs={'data-stat': 'team_name_abbr'}).text)
-                and len(tag.find('td', attrs={'data-stat': 'team_name_abbr'}).text) <= 3
-            ]
-            row['Team(s)'] = ','.join(set(all_teams))
-            row['Longest Team'] = mode(all_teams)
-            #   b. Jersey Number(s)
-            # for number_medal in soup.find('div', class_='uni_holder br')('a'):
-            #     num = number_medal.get_text(strip=True)
-            #     # Year and franchise info would need to be extrated from this string
-            #     num_info = number_medal.get('data-tip')
-            #   c. Leagues
-            row['Leagues'] = ','.join(
-                                    set(
-                                        [
-                                            league.find('td', attrs={'data-stat': 'comp_name_abbr'}).get_text(strip=True)
-                                            for league
-                                            in data_table(_rows_no_spacers)
-                                            if league.find('td', attrs={'data-stat': 'comp_name_abbr'}) and not bad_league.match(league.find('td', attrs={'data-stat': 'comp_name_abbr'}).get_text(strip=True))
-                                        ]
+            if soup:
+                data_table = soup.find('table', attrs={'id':'players_standard_batting'}).find('tbody')
+                # Step 2: Fetch what we are looking for
+                try: 
+                    row['Born'] = soup.find('span', id='necro-birth').get('data-birth')
+                except AttributeError:
+                    row['Born'] = 'Unknown'
+                if row['Retirement Year'] == 'Not Found':
+                    if row['Died'] != 'Alive':
+                        last_year_row = data_table('tr')[-1]
+                        row['Retirement Year'] = last_year_row.th.text
+                    else:
+                        row['Retirement Year'] = "Active"
+                death_date = soup.find('span', id='necro-death').get('data-death') if soup.find('span', id='necro-death') else None
+                
+                row['Died'] = 'Unknown'
+                #   a. Last team played for
+                row['Final Team'] = data_table(_rows_no_spacers)[-1].find('td', attrs={'data-stat': 'team_name_abbr'}).text
+                all_teams = [
+                    tag.find('td', attrs={'data-stat': 'team_name_abbr'}).text 
+                    for tag 
+                    in data_table(_rows_no_spacers)
+                    if not bad_team.match(tag.find('td', attrs={'data-stat': 'team_name_abbr'}).text)
+                    and len(tag.find('td', attrs={'data-stat': 'team_name_abbr'}).text) <= 3
+                ]
+                row['Team(s)'] = ','.join(set(all_teams))
+                row['Longest Team'] = mode(all_teams)
+                #   b. Jersey Number(s)
+                # for number_medal in soup.find('div', class_='uni_holder br')('a'):
+                #     num = number_medal.get_text(strip=True)
+                #     # Year and franchise info would need to be extrated from this string
+                #     num_info = number_medal.get('data-tip')
+                #   c. Leagues
+                row['Leagues'] = ','.join(
+                                        set(
+                                            [
+                                                league.find('td', attrs={'data-stat': 'comp_name_abbr'}).get_text(strip=True)
+                                                for league
+                                                in data_table(_rows_no_spacers)
+                                                if league.find('td', attrs={'data-stat': 'comp_name_abbr'}) and not bad_league.match(league.find('td', attrs={'data-stat': 'comp_name_abbr'}).get_text(strip=True))
+                                            ]
+                                        )
                                     )
-                                )
-            print(row)
-            new_rows.append(row)
+        print(row)
+        new_rows.append(row)
                      
     print(new_rows)
-    # with open('players_enhanced.csv', 'w', newline='') as newfile:
-    #     writer = csv.DictWriter(newfile, fieldnames=cols)
-    #     writer.writeheader()
-    #     writer.writerows(new_rows)
+    with open('players_enhanced.csv', 'w', newline='') as newfile:
+        writer = csv.DictWriter(newfile, fieldnames=new_rows[0].keys())
+        writer.writeheader()
+        writer.writerows(new_rows)
     return
 
 
