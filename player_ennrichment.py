@@ -1,4 +1,5 @@
 import csv
+from datetime import datetime
 import json
 import logging
 import random
@@ -11,6 +12,8 @@ from time import sleep
 
 bad_team = re.compile(r"\dTM|^Did not play")
 bad_league = re.compile(r"\dLG")
+# What else do we want to add? Nicknames? Alternative spellings?
+COLUMNS = ['Player Name', 'Position(s)', 'Team(s)', 'League(s)','Debut Year', 'Retirement Year', 'PA', 'AVG', 'OBP', 'SLG', 'Born', 'Died', 'Longest Team', 'Final Team', "Scrape Link"]
 
 def position_filter(s: str) -> str:
     if s in {"1B", "2B", "3B", "C", "DH", "SS", "LF", "CF", "RF", "OF", "P"}:
@@ -218,7 +221,7 @@ def build_teams_negro_leagues():
     print(abbrs)
     check = (len(set(abbrs)) == len(abbrs))
     print(check)
-    if not check.duplicated().any():
+    if not check:
         final = {a: b for a, b in zip(abbrs, names)}
         print(final)
         with open("negro_pro_teams.json", 'w') as file:
@@ -245,6 +248,7 @@ def scrape_negro_leagues_seamhead():
         # print(eligible_players)
         print(len(eligible_players))
         for player in eligible_players[33::42]:
+            row = {col_name: None for col_name in COLUMNS}
             player_url: str = player('td')[1].a.get('href')
             try:
                 data_resp = req.get(f"{URL_BASE}{player_url}{PLAYER_DATA_MOD}")
@@ -255,22 +259,42 @@ def scrape_negro_leagues_seamhead():
                 life_data: element.Tag = data_soup(_player_info)[0]
                 all_life_text = life_data.get_text().split()
                 print(life_data.h1.get_text())
+                row['Player Name'] = life_data.h1.get_text()
                 print(all_life_text)
+                """
+                all_life_text examples:
+                ['Fidel', 'Reséndez', 'Fidel', 'Reséndez', 'San', 'Nicolás', '(Albañil)', 'Born:', 'March', '23,', '1919', 'in', 'Ciudad', 'de', 'México,', 'Mexico', 'Bats:', 'L', 'Throws:', 'L', 'Ht:', '5\'8"', 'Wt:', '185']
+
+                ['José', 'Muñoz', 'José', 'Muñoz', '(Joseíto)', 'Born:', '1881', 'in', 'La', 'Habana,', 'Cuba', 'Died:', 'December', '25,', '1945', 'deathplace', 'unknown', '(64', 'years', 'old)', 'Bats:', 'R', 'Throws:', 'R', 'Ht:', '5\'7"', 'Wt:']
+
+                ['Pinky', 'Ward', 'Thomas', 'Ward', 'Born:', 'birthplace', 'unknown', 'Bats:', 'Throws:', 'Wt:']
+
+                ['Bob', 'Clarke', 'Robert', 'Alfred', 'Clarke', '(Eggie;', 'Kiki)', 'Born:', 'January', '8,', '1903', 'in', 'Richmond,', 'VA', 'Died:', 'January', '1971', 'in', 'Newark,', 'NJ', '(67', 'years', 'old)', 'Bats:', 'R', 'Throws:', 'R', 'Ht:', '5\'10"', 'Wt:', '175']
+                """
                 try:
                     birth_info_start = all_life_text.index("Born:")
                 except ValueError:
                     print("Birth unknown")
+                    row['Born'] = "Unknown"
                 else:
                     print(birth_info_start)
-                    print(' '.join(all_life_text[birth_info_start:(birth_info_start+4)]))
+                    birth_string = ' '.join(all_life_text[birth_info_start+1:(birth_info_start+4)])
+                    birth_string = datetime.strptime('%B %d, %Y').strftime('%m-%d-%Y')
+                    print(birth_string)
+                    row['Born'] = birth_string
 
                 try:
                     death_info_start = all_life_text.index("Died:")
                 except ValueError:
                     print("Death unknown")
+                    row['Died'] = "Unknown"
                 else:
                     print(death_info_start)
-                    print(' '.join(all_life_text[death_info_start:(death_info_start+4)]))
+                    death_string = ' '.join(all_life_text[death_info_start+1:(death_info_start+4)])
+                    print(death_string)
+                    row['Died'] = death_string
+
+
                 
             sleep(15)
 
