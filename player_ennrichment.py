@@ -13,7 +13,44 @@ from time import sleep
 bad_team = re.compile(r"\dTM|^Did not play")
 bad_league = re.compile(r"\dLG")
 # What else do we want to add? Nicknames? Alternative spellings?
-COLUMNS = ['Player Name', 'Position(s)', 'Team(s)', 'League(s)','Debut Year', 'Retirement Year', 'PA', 'AVG', 'OBP', 'SLG', 'Born', 'Died', 'Longest Team', 'Final Team', "Scrape Link"]
+# Awards
+# Full career stats
+COLUMNS = ['Player Name', 'Position(s)', 'Team(s)', 'League(s)', 'Debut Year', 'Retirement Year', 'PA', 'AVG', 'OBP', 'SLG', 'Born', 'Died', 'Longest Team', 'Final Team', "Scrape Link"]
+
+
+def normalize_extracted_date(life_text, keyword):
+    try:
+        keyword_index = life_text.index(keyword)
+    except ValueError:
+        return "Unknown"
+
+    date_tokens = []
+    year = None
+    for token in life_text[keyword_index + 1:]:
+        year_match = re.fullmatch(r"\d{4}", token.rstrip(".,"))
+        if year_match:
+            year = year_match.group()
+            break
+        date_tokens.append(token)
+
+    if year is None:
+        return "Unknown"
+
+    date_text = " ".join((*date_tokens, year))
+    for input_format, output_format in (
+        ("%B %d, %Y", "%m-%d-%Y"),
+        ("%b %d, %Y", "%m-%d-%Y"),
+        ("%B %Y", "%m-%Y"),
+        ("%b %Y", "%m-%Y"),
+        ("%Y", "%Y"),
+    ):
+        try:
+            return datetime.strptime(date_text, input_format).strftime(output_format)
+        except ValueError:
+            continue
+
+    return year
+
 
 def position_filter(s: str) -> str:
     if s in {"1B", "2B", "3B", "C", "DH", "SS", "LF", "CF", "RF", "OF", "P"}:
@@ -247,7 +284,7 @@ def scrape_negro_leagues_seamhead():
         eligible_players = main_data_soup.find('tbody')(_sufficient_plate_apps)
         # print(eligible_players)
         print(len(eligible_players))
-        for player in eligible_players[33::42]:
+        for player in eligible_players[7::69]:
             row = {col_name: None for col_name in COLUMNS}
             player_url: str = player('td')[1].a.get('href')
             try:
@@ -271,28 +308,12 @@ def scrape_negro_leagues_seamhead():
 
                 ['Bob', 'Clarke', 'Robert', 'Alfred', 'Clarke', '(Eggie;', 'Kiki)', 'Born:', 'January', '8,', '1903', 'in', 'Richmond,', 'VA', 'Died:', 'January', '1971', 'in', 'Newark,', 'NJ', '(67', 'years', 'old)', 'Bats:', 'R', 'Throws:', 'R', 'Ht:', '5\'10"', 'Wt:', '175']
                 """
-                try:
-                    birth_info_start = all_life_text.index("Born:")
-                except ValueError:
-                    print("Birth unknown")
-                    row['Born'] = "Unknown"
-                else:
-                    print(birth_info_start)
-                    birth_string = ' '.join(all_life_text[birth_info_start+1:(birth_info_start+4)])
-                    birth_string = datetime.strptime('%B %d, %Y').strftime('%m-%d-%Y')
-                    print(birth_string)
-                    row['Born'] = birth_string
-
-                try:
-                    death_info_start = all_life_text.index("Died:")
-                except ValueError:
-                    print("Death unknown")
-                    row['Died'] = "Unknown"
-                else:
-                    print(death_info_start)
-                    death_string = ' '.join(all_life_text[death_info_start+1:(death_info_start+4)])
-                    print(death_string)
-                    row['Died'] = death_string
+                birth_string = normalize_extracted_date(all_life_text, "Born:")
+                death_string = normalize_extracted_date(all_life_text, "Died:")
+                print(birth_string)
+                print(death_string)
+                row['Born'] = birth_string
+                row['Died'] = death_string
 
 
                 
